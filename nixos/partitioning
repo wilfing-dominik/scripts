@@ -1,0 +1,29 @@
+# 1. Check available drives
+lsblk
+lsblk -f
+
+# 2. Partition the drive (replace sdX with your actual drive)
+sudo parted /dev/sdX -- mklabel gpt
+sudo parted /dev/sdX -- mkpart root ext4 512MB -8GB
+sudo parted /dev/sdX -- mkpart swap linux-swap -8GB 100%
+sudo parted /dev/sdX -- mkpart ESP fat32 1MB 512MB
+sudo parted /dev/sdX -- set 3 esp on
+
+# 3. Format the partitions
+sudo mkfs.ext4 -L nixos /dev/sdX1
+sudo mkswap -L swap /dev/sdX2
+sudo mkfs.fat -F 32 -n boot /dev/sdX3
+
+# 4. Mount the partitions
+sudo mount /dev/disk/by-label/nixos /mnt
+sudo mkdir -p /mnt/boot
+sudo mount /dev/disk/by-label/boot /mnt/boot
+sudo swapon /dev/sdX2
+
+# 5. Generate NixOS configuration
+sudo nixos-generate-config --root /mnt
+
+# 6. Edit the configuration
+sudo nano /mnt/etc/nixos/configuration.nix
+
+sudo nixos-install
