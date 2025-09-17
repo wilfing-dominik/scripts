@@ -1,29 +1,139 @@
-# 1. Check available drives
-lsblk
-lsblk -f
+#!/bin/bash
 
-# 2. Partition the drive (replace sdX with your actual drive)
-sudo parted /dev/sdX -- mklabel gpt
-sudo parted /dev/sdX -- mkpart root ext4 512MB -8GB
-sudo parted /dev/sdX -- mkpart swap linux-swap -8GB 100%
-sudo parted /dev/sdX -- mkpart ESP fat32 1MB 512MB
-sudo parted /dev/sdX -- set 3 esp on
+# NixOS Installation Script
+# This script helps you install NixOS by interactively selecting the target drive
 
-# 3. Format the partitions
-sudo mkfs.ext4 -L nixos /dev/sdX1
-sudo mkswap -L swap /dev/sdX2
-sudo mkfs.fat -F 32 -n boot /dev/sdX3
+set -e  # Exit on any error
 
-# 4. Mount the partitions
+echo "=== NixOS Installation Script ==="
+echo "WARNING: This will completely wipe the selected drive!"
+echo
+
+# Function to display available drives
+show_drives() {
+    echo "Available drives:"
+    echo "=================="
+    lsblk -d -o NAME,SIZE,MODEL,TYPE | grep -v loop
+    echo
+    echo "Detailed view with filesystems:"
+    echo "==============================="
+    lsblk -f
+    echo
+}
+
+# Function to confirm drive selection
+confirm_drive() {
+    local drive=$1
+    echo "You selected: /dev/$drive"
+    echo
+    lsblk -f /dev/$drive 2>/dev/null || {
+        echo "ERROR: Drive /dev/$drive not found!"
+        return 1
+    }
+    echo
+    read -p "Are you ABSOLUTELY sure you want to wipe /dev/$drive? (type 'YES' to confirm): " confirm
+    if [[ "$confirm" != "YES" ]]; then
+        echo "Installation cancelled."
+        return 1
+    fi
+}
+
+# Main execution
+show_drives
+
+# Get drive selection from user
+while true; do
+    read -p "Enter the drive name (e.g., sda, sdb, nvme0n1): " drive_name
+    
+    # Remove /dev/ prefix if user included it
+    drive_name=${drive_name#/dev/}
+    
+    # Check if drive exists
+    if [[ -b "/dev/$drive_name" ]]; then
+        if confirm_drive "$drive_name"; then
+            break
+        else
+            echo "Please select a different drive or cancel with Ctrl+C"
+            show_drives
+        fi
+    else
+        echo "ERROR: /dev/$drive_name does not exist!"
+        echo "Please choose from the available drives shown above."
+        echo
+    fi
+done
+
+echo
+echo "Starting installation on /dev/$drive_name..."
+echo "============================================"
+
+# 1. Partition the drive
+echo "Step 1: Partitioning the drive..."
+sudo parted /dev/$drive_name -- mklabel gpt
+sudo parted /dev/$drive_name -- mkpart root ext4 512MB -8GB
+sudo parted /dev/$drive_name -- mkpart swap linux-swap -8GB 100%
+sudo parted /dev/$drive_name -- mkpart ESP fat32 1MB 512MB
+sudo parted /dev/$drive_name -- set 3 esp on
+
+# Wait for partition changes to be recognized
+sleep 2
+
+# Determine partition naming scheme (sda1 vs nvme0n1p1)
+if [[ $drive_name == nvme* ]] || [[ $drive_name == mmcblk* ]]; then
+    part1="${drive_name}p1"
+    part2="${drive_name}p2"
+    part3="${drive_name}p3"
+else
+    part1="${drive_name}1"
+    part2="${drive_name}2"
+    part3="${drive_name}3"
+fi
+
+# 2. Format the partitions
+echo "Step 2: Formatting partitions..."
+sudo mkfs.ext4 -L nixos /dev/$part1
+sudo mkswap -L swap /dev/$part2
+sudo mkfs.fat -F 32 -n boot /dev/$part3
+
+# 3. Mount the partitions
+echo "Step 3: Mounting partitions..."
 sudo mount /dev/disk/by-label/nixos /mnt
 sudo mkdir -p /mnt/boot
 sudo mount /dev/disk/by-label/boot /mnt/boot
-sudo swapon /dev/sdX2
+sudo swapon /dev/$part2
 
-# 5. Generate NixOS configuration
+# 4. Generate NixOS configuration
+echo "Step 4: Generating NixOS configuration..."
 sudo nixos-generate-config --root /mnt
 
-# 6. Edit the configuration
-sudo nano /mnt/etc/nixos/configuration.nix
+echo
+echo "============================================"
+echo "Basic setup complete!"
+echo "============================================"
+echo
+echo "Next steps:"
+echo "1. Edit the configuration: sudo nano /mnt/etc/nixos/configuration.nix"
+echo "2. Or replace it with your custom config from GitHub"
+echo "3. Run: sudo nixos-install"
+echo "4. Set root password when prompted"
+echo "5. Reboot: sudo reboot"
+echo
+echo "Your partitions:"
+echo "Root: /dev/$part1 mounted at /mnt"
+echo "Boot: /dev/$part3 mounted at /mnt/boot"  
+echo "Swap: /dev/$part2 activated"
+echo
 
-sudo nixos-install
+read -p "Do you want to open the configuration file now? (y/n): " edit_config
+if [[ "$edit_config" =~ ^[Yy]$ ]]; then
+    sudo nano /mnt/etc/nixos/configuration.nix
+fi
+
+echo
+read -p "Do you want to start the installation now? (y/n): " start_install
+if [[ "$start_install" =~ ^[Yy]$ ]]; then
+    echo "Starting nixos-install..."
+    sudo nixos-install
+else
+    echo "You can run 'sudo nixos-install' when ready."
+fi
